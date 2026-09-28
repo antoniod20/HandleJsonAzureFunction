@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AppSettings ⇄ Azure Env</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --border: #d0d4da; --text: #1d2330;
+    --muted: #6b7280; --accent: #0078d4; --accent-h: #106ebe; --err: #c42b1c;
+    --gutter: #eef0f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1b1d22; --panel: #24272e; --border: #3a3f48; --text: #e6e8eb;
+      --muted: #9aa1ab; --accent: #3a96dd; --accent-h: #5aa9e6; --err: #ff6b5b;
+      --gutter: #2b2f37;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif; font-size: 14px;
+    display: flex; flex-direction: column;
+  }
+  header { padding: 10px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  select { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; padding: 12px 16px; min-height: 0; }
+  .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .pane-head { display: flex; justify-content: space-between; align-items: center; padding: 0 2px 6px; }
+  .pane-head span { font-weight: 600; }
+  .pane-head button { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 13px; padding: 2px 6px; }
+  .pane-head button:hover { text-decoration: underline; }
+  .editor { flex: 1; display: flex; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); overflow: hidden; min-height: 0; }
+  .lines { background: var(--gutter); color: var(--muted); text-align: right; padding: 8px 6px; user-select: none; overflow: hidden; min-width: 40px; white-space: pre; }
+  textarea { flex: 1; border: none; outline: none; resize: none; background: transparent; color: var(--text); padding: 8px; white-space: pre; overflow: auto; tab-size: 2; }
+  .lines, textarea { font-family: Consolas, "Cascadia Code", monospace; font-size: 13px; line-height: 1.5; }
+  .actions { display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+  .actions button {
+    background: var(--accent); color: #fff; border: none; border-radius: 4px;
+    padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: 600; min-width: 130px;
+  }
+  .actions button:hover { background: var(--accent-h); }
+  footer { padding: 6px 16px 10px; min-height: 28px; color: var(--muted); }
+  footer.error { color: var(--err); }
+  @media (max-width: 800px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 1fr auto 1fr; }
+    .actions { flex-direction: row; justify-content: center; }
+    .pane { min-height: 250px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>AppSettings ⇄ Azure Environment Variables</h1>
+  <label>Formato destra
+    <select id="format">
+      <option value="azure">Azure Portal (Advanced edit)</option>
+      <option value="env">KEY=VALUE</option>
+    </select>
+  </label>
+  <label>Separatore
+    <select id="sep">
+      <option value="__">__ (Linux / Windows)</option>
+      <option value=":">: (solo Windows)</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="inferTypes"> Ripristina tipi (bool/numeri) nel JSON</label>
+</header>
+
+<main>
+  <section class="pane">
+    <div class="pane-head"><span>appsettings.json / local.settings.json</span>
+      <div><button data-copy="left">Copia</button><button data-clear="left">Pulisci</button></div>
+    </div>
+    <div class="editor"><div class="lines" id="left-lines">1</div><textarea id="left" spellcheck="false"></textarea></div>
+  </section>
+
+  <div class="actions">
+    <button id="toEnv">JSON → Env&nbsp;&nbsp;▶</button>
+    <button id="toJson">◀&nbsp;&nbsp;Env → JSON</button>
+  </div>
+
+  <section class="pane">
+    <div class="pane-head"><span>Variabili d'ambiente Azure</span>
+      <div><button data-copy="right">Copia</button><button data-clear="right">Pulisci</button></div>
+    </div>
+    <div class="editor"><div class="lines" id="right-lines">1</div><textarea id="right" spellcheck="false"></textarea></div>
+  </section>
+</main>
+
+<footer id="status">Incolla il JSON a sinistra o le variabili a destra e premi un pulsante.</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const left = $("left"), right = $("right"), status = $("status");
+
+function setStatus(msg, isError = false) {
+  status.textContent = msg;
+  status.className = isError ? "error" : "";
+}
+
+/* ---------- line numbers + synced scroll ---------- */
+function updateLines(ta) {
+  const n = ta.value.split("\n").length;
+  $(ta.id + "-lines").textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n");
+}
+function syncScroll(src, dst) {
+  src.addEventListener("scroll", () => {
+    $(src.id + "-lines").scrollTop = src.scrollTop;
+    if (syncing) return;
+    syncing = true;
+    dst.scrollTop = src.scrollTop;
+    dst.scrollLeft = src.scrollLeft;
+    $(dst.id + "-lines").scrollTop = dst.scrollTop;
+    requestAnimationFrame(() => syncing = false);
+  });
+}
+let syncing = false;
+[left, right].forEach(ta => {
+  ta.addEventListener("input", () => updateLines(ta));
+  ta.addEventListener("keydown", e => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end");
+      updateLines(ta);
+    }
+  });
+});
+syncScroll(left, right);
+syncScroll(right, left);
+
+/* ---------- JSON -> env ---------- */
+function flatten(obj, sep, prefix = "", out = []) {
+  if (obj !== null && typeof obj === "object") {
+    const entries = Array.isArray(obj) ? obj.map((v, i) => [String(i), v]) : Object.entries(obj);
+    if (entries.length === 0 && prefix) out.push([prefix, ""]);
+    for (const [k, v] of entries) flatten(v, sep, prefix ? prefix + sep + k : k, out);
+  } else if (prefix) {
+    out.push([prefix, obj === null ? "" : String(obj)]);
+  }
+  return out;
+}
+
+function jsonToEnv() {
+  const text = left.value.trim();
+  if (!text) return setStatus("Il pannello sinistro è vuoto.", true);
+  let obj;
+  try { obj = JSON.parse(stripJsonComments(text)); }
+  catch (e) { return setStatus("JSON non valido: " + e.message, true); }
+
+  // local.settings.json: use the "Values" section (+ ConnectionStrings flattened as-is)
+  if (obj && typeof obj === "object" && !Array.isArray(obj) && "Values" in obj && ("IsEncrypted" in obj || "Host" in obj)) {
+    obj = obj.Values;
+  }
+  const sep = $("sep").value;
+  const pairs = flatten(obj, sep);
+
+  if ($("format").value === "azure") {
+    const arr = pairs.map(([name, value]) => ({ name, value, slotSetting: false }));
+    right.value = JSON.stringify(arr, null, 2);
+  } else {
+    right.value = pairs.map(([k, v]) => `${k}=${v}`).join("\n");
+  }
+  updateLines(right);
+  setStatus(`Convertite ${pairs.length} variabili.`);
+}
+
+/* ---------- env -> JSON ---------- */
+function parseEnvText(text) {
+  const t = text.trim();
+  if (t.startsWith("[") || t.startsWith("{")) {
+    const data = JSON.parse(t);
+    if (Array.isArray(data)) {
+      return data.map(item => {
+        if (!item || typeof item !== "object" || !("name" in item)) throw new Error("ogni elemento deve avere 'name' e 'value'");
+        return [String(item.name), item.value == null ? "" : String(item.value)];
+      });
+    }
+    // plain flat object { "A__B": "x" }
+    return Object.entries(data).map(([k, v]) => [k, v == null ? "" : String(v)]);
+  }
+  const pairs = [];
+  t.split(/\r?\n/).forEach((line, i) => {
+    const l = line.trim();
+    if (!l || l.startsWith("#")) return;
+    const eq = l.indexOf("=");
+    if (eq < 1) throw new Error(`riga ${i + 1}: manca '='`);
+    let v = l.slice(eq + 1);
+    if (/^".*"$/.test(v) || /^'.*'$/.test(v)) v = v.slice(1, -1);
+    pairs.push([l.slice(0, eq).trim(), v]);
+  });
+  return pairs;
+}
+
+function inferValue(v) {
+  if (v === "true") return true;
+  if (v === "false") return false;
+  if (/^-?(0|[1-9]\d*)(\.\d+)?$/.test(v) && Number.isSafeInteger(Math.trunc(Number(v)))) return Number(v);
+  return v;
+}
+
+function unflatten(pairs, infer) {
+  const root = {};
+  for (const [key, value] of pairs) {
+    const parts = key.split(/__|:/);
+    let node = root;
+    parts.forEach((p, i) => {
+      if (i === parts.length - 1) {
+        node[p] = infer ? inferValue(value) : value;
+      } else {
+        if (node[p] === undefined || typeof node[p] !== "object") node[p] = {};
+        node = node[p];
+      }
+    });
+  }
+  return toArrays(root);
+}
+
+// objects whose keys are exactly 0..n-1 become arrays
+function toArrays(node) {
+  if (node === null || typeof node !== "object") return node;
+  for (const k of Object.keys(node)) node[k] = toArrays(node[k]);
+  const keys = Object.keys(node);
+  if (keys.length && keys.every((k, i) => k === String(i))) return keys.map(k => node[k]);
+  return node;
+}
+
+function envToJson() {
+  const text = right.value.trim();
+  if (!text) return setStatus("Il pannello destro è vuoto.", true);
+  let pairs;
+  try { pairs = parseEnvText(text); }
+  catch (e) { return setStatus("Formato variabili non valido: " + e.message, true); }
+  const obj = unflatten(pairs, $("inferTypes").checked);
+  left.value = JSON.stringify(obj, null, 2);
+  updateLines(left);
+  setStatus(`Convertite ${pairs.length} variabili in JSON.`);
+}
+
+// appsettings.json allows // and /* */ comments and trailing commas
+function stripJsonComments(s) {
+  let out = "", inStr = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i], n = s[i + 1];
+    if (inStr) {
+      out += c;
+      if (c === "\\") { out += n; i++; }
+      else if (c === '"') inStr = false;
+    } else if (c === '"') { inStr = true; out += c; }
+    else if (c === "/" && n === "/") { while (i < s.length && s[i] !== "\n") i++; out += "\n"; }
+    else if (c === "/" && n === "*") { i += 2; while (i < s.length && !(s[i] === "*" && s[i + 1] === "/")) i++; i++; }
+    else out += c;
+  }
+  return out.replace(/,(\s*[}\]])/g, "$1");
+}
+
+/* ---------- buttons ---------- */
+$("toEnv").addEventListener("click", jsonToEnv);
+$("toJson").addEventListener("click", envToJson);
+document.querySelectorAll("[data-copy]").forEach(b => b.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($(b.dataset.copy).value); setStatus("Copiato negli appunti."); }
+  catch { setStatus("Impossibile copiare negli appunti.", true); }
+}));
+document.querySelectorAll("[data-clear]").forEach(b => b.addEventListener("click", () => {
+  const ta = $(b.dataset.clear); ta.value = ""; updateLines(ta);
+}));
+
+// example on first load
+left.value = JSON.stringify({
+  IsEncrypted: false,
+  Values: {
+    AzureWebJobsStorage: "UseDevelopmentStorage=true",
+    FUNCTIONS_WORKER_RUNTIME: "dotnet-isolated",
+    Database: { ConnectionString: "Server=.;Database=Test", TimeoutSeconds: 30 },
+    AllowedHosts: ["example.com", "contoso.com"]
+  }
+}, null, 2);
+updateLines(left); updateLines(right);
+</script>
+</body>
+</html>
