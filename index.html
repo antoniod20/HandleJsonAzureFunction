@@ -44,19 +44,35 @@
     padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: 600; min-width: 130px;
   }
   .actions button:hover { background: var(--accent-h); }
+  .tabs { display: flex; gap: 2px; }
+  .tabs button { background: none; border: 1px solid transparent; color: var(--muted); padding: 5px 14px; cursor: pointer; font-size: 13px; border-radius: 4px; }
+  .tabs button.active { background: var(--panel); border-color: var(--border); color: var(--text); font-weight: 600; }
+  [hidden] { display: none !important; }
+  #merge-view { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr auto 1fr; }
+  .merge-bar { grid-column: 1 / -1; display: flex; justify-content: center; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .merge-bar label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .merge-bar button { background: var(--accent); color: #fff; border: none; border-radius: 4px; padding: 10px 18px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .merge-bar button:hover { background: var(--accent-h); }
+  .changes { flex: 1; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); overflow: auto; padding: 8px; margin: 0; font-family: Consolas, "Cascadia Code", monospace; font-size: 12px; line-height: 1.6; white-space: pre; }
+  .changes .add { color: #2e8b57; } .changes .mod { color: #c27c0e; } .changes .muted { color: var(--muted); }
   footer { padding: 6px 16px 10px; min-height: 28px; color: var(--muted); }
   footer.error { color: var(--err); }
   @media (max-width: 800px) {
     main { grid-template-columns: 1fr; grid-template-rows: 1fr auto 1fr; }
     .actions { flex-direction: row; justify-content: center; }
     .pane { min-height: 250px; }
+    #merge-view { grid-template-columns: 1fr; grid-template-rows: none; }
   }
 </style>
 </head>
 <body>
 <header>
   <h1>AppSettings ⇄ Azure Environment Variables</h1>
-  <label>Formato destra
+  <nav class="tabs">
+    <button data-tab="convert-view" class="active">Converti</button>
+    <button data-tab="merge-view">Merge</button>
+  </nav>
+  <label class="only-convert">Formato destra
     <select id="format">
       <option value="azure">Azure Portal (Advanced edit)</option>
       <option value="env">KEY=VALUE</option>
@@ -71,7 +87,7 @@
   <label><input type="checkbox" id="inferTypes"> Ripristina tipi (bool/numeri) nel JSON</label>
 </header>
 
-<main>
+<main id="convert-view">
   <section class="pane">
     <div class="pane-head"><span>appsettings.json / local.settings.json</span>
       <div><button data-copy="left">Copia</button><button data-clear="left">Pulisci</button></div>
@@ -89,6 +105,44 @@
       <div><button data-copy="right">Copia</button><button data-clear="right">Pulisci</button></div>
     </div>
     <div class="editor"><div class="lines" id="right-lines">1</div><textarea id="right" spellcheck="false"></textarea></div>
+  </section>
+</main>
+
+<main id="merge-view" hidden>
+  <section class="pane">
+    <div class="pane-head"><span>Base (es. quello attuale su Azure)</span>
+      <div><button data-copy="base">Copia</button><button data-clear="base">Pulisci</button></div>
+    </div>
+    <div class="editor"><div class="lines" id="base-lines">1</div><textarea id="base" spellcheck="false" placeholder="appsettings.json, local.settings.json, array Azure Portal o KEY=VALUE"></textarea></div>
+  </section>
+  <section class="pane">
+    <div class="pane-head"><span>Aggiornamenti (valori da applicare)</span>
+      <div><button data-copy="upd">Copia</button><button data-clear="upd">Pulisci</button></div>
+    </div>
+    <div class="editor"><div class="lines" id="upd-lines">1</div><textarea id="upd" spellcheck="false" placeholder="appsettings.json, local.settings.json, array Azure Portal o KEY=VALUE"></textarea></div>
+  </section>
+
+  <div class="merge-bar">
+    <label>Formato risultato
+      <select id="mergeFormat">
+        <option value="same">Come la base</option>
+        <option value="azure">Azure Portal (Advanced edit)</option>
+        <option value="env">KEY=VALUE</option>
+        <option value="json">JSON (appsettings)</option>
+      </select>
+    </label>
+    <button id="doMerge">▼&nbsp;&nbsp;Merge&nbsp;&nbsp;▼</button>
+  </div>
+
+  <section class="pane">
+    <div class="pane-head"><span>Risultato</span>
+      <div><button data-copy="out">Copia</button><button data-clear="out">Pulisci</button></div>
+    </div>
+    <div class="editor"><div class="lines" id="out-lines">1</div><textarea id="out" spellcheck="false"></textarea></div>
+  </section>
+  <section class="pane">
+    <div class="pane-head"><span>Modifiche</span></div>
+    <pre class="changes" id="changes"><span class="muted">Nessun merge eseguito.</span></pre>
   </section>
 </main>
 
@@ -110,7 +164,6 @@ function updateLines(ta) {
 }
 function syncScroll(src, dst) {
   src.addEventListener("scroll", () => {
-    $(src.id + "-lines").scrollTop = src.scrollTop;
     if (syncing) return;
     syncing = true;
     dst.scrollTop = src.scrollTop;
@@ -120,8 +173,10 @@ function syncScroll(src, dst) {
   });
 }
 let syncing = false;
-[left, right].forEach(ta => {
+const textareas = document.querySelectorAll("textarea");
+textareas.forEach(ta => {
   ta.addEventListener("input", () => updateLines(ta));
+  ta.addEventListener("scroll", () => { $(ta.id + "-lines").scrollTop = ta.scrollTop; });
   ta.addEventListener("keydown", e => {
     if (e.key === "Tab") {
       e.preventDefault();
@@ -132,6 +187,17 @@ let syncing = false;
 });
 syncScroll(left, right);
 syncScroll(right, left);
+
+/* ---------- alphabetical ordering ---------- */
+// case-insensitive, numeric-aware (AllowedHosts__2 before AllowedHosts__10)
+const compareKeys = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }) || (a < b ? -1 : a > b ? 1 : 0);
+function sortKeys(node) {
+  if (node === null || typeof node !== "object") return node;
+  if (Array.isArray(node)) return node.map(sortKeys);
+  const out = {};
+  for (const k of Object.keys(node).sort(compareKeys)) out[k] = sortKeys(node[k]);
+  return out;
+}
 
 /* ---------- JSON -> env ---------- */
 function flatten(obj, sep, prefix = "", out = []) {
@@ -153,18 +219,10 @@ function jsonToEnv() {
   catch (e) { return setStatus("JSON non valido: " + e.message, true); }
 
   // local.settings.json: use the "Values" section (+ ConnectionStrings flattened as-is)
-  if (obj && typeof obj === "object" && !Array.isArray(obj) && "Values" in obj && ("IsEncrypted" in obj || "Host" in obj)) {
-    obj = obj.Values;
-  }
+  if (isLocalSettings(obj)) obj = obj.Values;
   const sep = $("sep").value;
-  const pairs = flatten(obj, sep);
-
-  if ($("format").value === "azure") {
-    const arr = pairs.map(([name, value]) => ({ name, value, slotSetting: false }));
-    right.value = JSON.stringify(arr, null, 2);
-  } else {
-    right.value = pairs.map(([k, v]) => `${k}=${v}`).join("\n");
-  }
+  const pairs = flatten(obj, sep).sort((a, b) => compareKeys(a[0], b[0]));
+  right.value = formatEnv(pairs.map(([name, value]) => ({ name, value })), $("format").value);
   updateLines(right);
   setStatus(`Convertite ${pairs.length} variabili.`);
 }
@@ -217,7 +275,16 @@ function unflatten(pairs, infer) {
       }
     });
   }
-  return toArrays(root);
+  return sortKeys(toArrays(root));
+}
+
+function formatEnv(items, format) {
+  if (format === "azure") return JSON.stringify(items.map(({ name, value, slotSetting }) => ({ name, value, slotSetting: !!slotSetting })), null, 2);
+  return items.map(({ name, value }) => `${name}=${value}`).join("\n");
+}
+
+function isLocalSettings(obj) {
+  return obj && typeof obj === "object" && !Array.isArray(obj) && "Values" in obj && ("IsEncrypted" in obj || "Host" in obj);
 }
 
 // objects whose keys are exactly 0..n-1 become arrays
@@ -258,7 +325,82 @@ function stripJsonComments(s) {
   return out.replace(/,(\s*[}\]])/g, "$1");
 }
 
+/* ---------- merge ---------- */
+// Reads any supported input: appsettings.json, local.settings.json, Azure Portal array, flat object, KEY=VALUE.
+function readSettings(text, sep) {
+  const t = text.trim();
+  if (t.startsWith("[") || t.startsWith("{")) {
+    const data = JSON.parse(stripJsonComments(t));
+    if (Array.isArray(data)) {
+      return { kind: "azure", items: data.map(item => {
+        if (!item || typeof item !== "object" || !("name" in item)) throw new Error("ogni elemento deve avere 'name' e 'value'");
+        return { name: String(item.name), value: item.value == null ? "" : String(item.value), slotSetting: !!item.slotSetting };
+      }) };
+    }
+    const local = isLocalSettings(data);
+    const items = flatten(local ? data.Values : data, sep).map(([name, value]) => ({ name, value, slotSetting: false }));
+    return { kind: local ? "local" : "json", items, wrapper: local ? data : null };
+  }
+  return { kind: "env", items: parseEnvText(t).map(([name, value]) => ({ name, value, slotSetting: false })) };
+}
+
+// .NET configuration keys are case-insensitive and ':' is equivalent to '__'
+const normKey = k => k.replace(/:/g, "__").toLowerCase();
+
+function doMerge() {
+  const baseText = $("base").value.trim(), updText = $("upd").value.trim();
+  if (!baseText) return setStatus("Il pannello Base è vuoto.", true);
+  if (!updText) return setStatus("Il pannello Aggiornamenti è vuoto.", true);
+  const sep = $("sep").value;
+  let base, upd;
+  try { base = readSettings(baseText, sep); } catch (e) { return setStatus("Base non valida: " + e.message, true); }
+  try { upd = readSettings(updText, sep); } catch (e) { return setStatus("Aggiornamenti non validi: " + e.message, true); }
+
+  // existing keys keep their name and position; update values win; new keys are added
+  const map = new Map();
+  for (const it of base.items) map.set(normKey(it.name), { ...it });
+  const added = [], changed = [];
+  let unchanged = 0;
+  for (const u of upd.items) {
+    const ex = map.get(normKey(u.name));
+    if (!ex) { map.set(normKey(u.name), { ...u }); added.push(u); continue; }
+    const slotChanged = upd.kind === "azure" && ex.slotSetting !== u.slotSetting;
+    if (ex.value === u.value && !slotChanged) { unchanged++; continue; }
+    changed.push({ name: ex.name, from: ex.value, to: u.value });
+    ex.value = u.value;
+    if (upd.kind === "azure") ex.slotSetting = u.slotSetting;
+  }
+  const items = [...map.values()].sort((a, b) => compareKeys(a.name, b.name));
+
+  let fmt = $("mergeFormat").value;
+  if (fmt === "same") fmt = base.kind;
+  const out = $("out");
+  if (fmt === "azure" || fmt === "env") out.value = formatEnv(items, fmt);
+  else if (fmt === "local") out.value = JSON.stringify({ ...base.wrapper, Values: Object.fromEntries(items.map(i => [i.name, i.value])) }, null, 2);
+  else out.value = JSON.stringify(unflatten(items.map(i => [i.name, i.value]), $("inferTypes").checked), null, 2);
+  updateLines(out);
+
+  const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const byName = (a, b) => compareKeys(a.name, b.name);
+  const lines = [
+    ...changed.sort(byName).map(c => `<span class="mod">~ ${esc(c.name)}\n    ${esc(c.from)}\n  → ${esc(c.to)}</span>`),
+    ...added.sort(byName).map(a => `<span class="add">+ ${esc(a.name)} = ${esc(a.value)}</span>`)
+  ];
+  $("changes").innerHTML = lines.length ? lines.join("\n") : `<span class="muted">Nessuna differenza: la base è già aggiornata.</span>`;
+  setStatus(`Merge completato: ${changed.length} modificate, ${added.length} aggiunte, ${unchanged} invariate, ${items.length} totali.`);
+}
+
+/* ---------- tabs ---------- */
+document.querySelectorAll("[data-tab]").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("[data-tab]").forEach(x => {
+    x.classList.toggle("active", x === b);
+    $(x.dataset.tab).hidden = x !== b;
+  });
+  document.querySelectorAll(".only-convert").forEach(el => el.hidden = b.dataset.tab !== "convert-view");
+}));
+
 /* ---------- buttons ---------- */
+$("doMerge").addEventListener("click", doMerge);
 $("toEnv").addEventListener("click", jsonToEnv);
 $("toJson").addEventListener("click", envToJson);
 document.querySelectorAll("[data-copy]").forEach(b => b.addEventListener("click", async () => {
@@ -279,7 +421,7 @@ left.value = JSON.stringify({
     AllowedHosts: ["example.com", "contoso.com"]
   }
 }, null, 2);
-updateLines(left); updateLines(right);
+textareas.forEach(updateLines);
 </script>
 </body>
 </html>
