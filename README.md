@@ -9,9 +9,3 @@ Pagina statica (un solo `index.html`, nessuna dipendenza) per convertire:
 Tutti gli output hanno le chiavi in ordine alfabetico.
 
 Tutto avviene nel browser: nessun dato viene inviato altrove.
-
-## Pubblicazione su GitHub Pages
-
-1. Crea un repository e fai push di `index.html`.
-2. *Settings → Pages → Build and deployment*: Source **Deploy from a branch**, branch `main`, cartella `/ (root)`.
-3. Il sito sarà su `https://<utente>.github.io/<repo>/`.
